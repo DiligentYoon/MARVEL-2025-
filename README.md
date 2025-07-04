@@ -63,41 +63,42 @@ The project is composed of several key modules that interact to create the multi
 ```mermaid
 graph TD
     subgraph "Driver (driver.py)"
-        A[Main Training Loop] --> B{Replay Buffer};
-        A --> C[Policy & Q-Networks];
-        B --> D[Training Function];
-        D --> C;
+        TrainingLoop[Main Training Loop] --> ReplayBuffer{Replay Buffer}
+        TrainingLoop --> Networks[Policy & Q-Networks]
+        ReplayBuffer --> TrainingFunc[Training Function]
+        TrainingFunc --> Networks
     end
 
     subgraph "Ray Distributed Runners (runner.py)"
-        E(Runner) -- Manages --> F(MultiAgentWorker);
-        C -- Weights --> E;
-        F -- Experiences --> B;
+        Runner(Runner) -- Manages --> Worker(MultiAgentWorker)
+        Networks -- Weights --> Runner
+        Worker -- Experiences --> ReplayBuffer
     end
 
     subgraph "Simulation Instance (multi_agent_worker.py)"
-        F -- Controls --> G[Agent List];
-        F -- Manages --> H[Environment (env.py)];
+        Worker -- Controls --> AgentList[Agent List]
+        Worker -- Manages --> Env[Environment (env.py)]
     end
 
     subgraph "Agent & Its Brain (agent.py)"
-        G -- Contains multiple --> I(Agent);
-        I -- Uses --> C;
-        I -- Uses --> J[Node Manager (node_manager.py)];
-        J -- Uses --> K[QuadTree (quads.py)];
+        AgentList -- Contains multiple --> Agent(Agent)
+        Agent -- Uses --> Networks
+        Agent -- Uses --> NodeManager[Node Manager (node_manager.py)]
+        NodeManager -- Uses --> QuadTree[QuadTree (quads.py)]
     end
 
     subgraph "Environment & Physics"
-        H -- Updates --> L[Belief Map];
-        M[Sensor (sensor.py)] -- Updates --> L;
-        N[Motion Model (motion_model.py)] -- Constrains --> I;
-        I -- Acts on --> H;
-        H -- Provides --> O{Reward & Done Signal};
+        Env -- Updates --> BeliefMap[Belief Map]
+        Sensor[Sensor (sensor.py)] -- Updates --> BeliefMap
+        MotionModel[Motion Model (motion_model.py)] -- Constrains --> Agent
+        Agent -- Acts on --> Env
+        Env -- Provides --> RewardSignal{Reward & Done Signal}
     end
 
-    style C fill:#f9f,stroke:#333,stroke-width:2px
-    style J fill:#ccf,stroke:#333,stroke-width:2px
-    style H fill:#cfc,stroke:#333,stroke-width:2px
+    style Networks fill:#f9f,stroke:#333,stroke-width:2px
+    style NodeManager fill:#ccf,stroke:#333,stroke-width:2px
+    style Env fill:#cfc,stroke:#333,stroke-width:2px
+```
 
 ### Core Module Functions
 

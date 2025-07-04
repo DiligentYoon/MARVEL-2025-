@@ -98,7 +98,6 @@ graph TD
     style C fill:#f9f,stroke:#333,stroke-width:2px
     style J fill:#ccf,stroke:#333,stroke-width:2px
     style H fill:#cfc,stroke:#333,stroke-width:2px
-```
 
 ### Core Module Functions
 

@@ -62,42 +62,43 @@ The project is composed of several key modules that interact to create the multi
 
 ```mermaid
 graph TD;
-    subgraph Driver;
-        TrainingLoop[Main Training Loop] --> ReplayBuffer{Replay Buffer};
-        TrainingLoop --> Networks[Policy & Q-Networks];
-        ReplayBuffer --> TrainingFunc[Training Function];
-        TrainingFunc --> Networks;
-    end;
+    Driver --> Runner;
+    Runner --> Driver;
+    Runner --> MultiAgentWorker;
+    MultiAgentWorker --> Agent;
+    MultiAgentWorker --> Env;
+    Agent --> PolicyNet;
+    Agent --> NodeManager;
+    NodeManager --> QuadTree;
+    Env --> Sensor;
+    Env --> MotionModel;
 
-    subgraph Runners;
-        Runner(Runner) -- Manages --> Worker(MultiAgentWorker);
-        Networks -- Weights --> Runner;
-        Worker -- Experiences --> ReplayBuffer;
-    end;
+    subgraph Driver_Module [driver.py]
+        Driver[Main Training Loop];
+        ReplayBuffer{Replay Buffer};
+        PolicyNet[Policy & Q-Networks];
+        TrainingFunc[Training Function];
+    end
 
-    subgraph Simulation;
-        Worker -- Controls --> AgentList[Agent List];
-        Worker -- Manages --> Env[Environment];
-    end;
+    subgraph Runner_Module [runner.py]
+        Runner(Runner);
+    end
 
-    subgraph Agent;
-        AgentList -- Contains multiple --> AgentInstance(Agent);
-        AgentInstance -- Uses --> Networks;
-        AgentInstance -- Uses --> NodeManager[Node Manager];
-        NodeManager -- Uses --> QuadTree[QuadTree];
-    end;
+    subgraph Simulation_Module [multi_agent_worker.py]
+        MultiAgentWorker(MultiAgentWorker);
+    end
 
-    subgraph Environment;
-        Env -- Updates --> BeliefMap[Belief Map];
-        Sensor[Sensor] -- Updates --> BeliefMap;
-        MotionModel[Motion Model] -- Constrains --> AgentInstance;
-        AgentInstance -- Acts on --> Env;
-        Env -- Provides --> RewardSignal{Reward & Done Signal};
-    end;
+    subgraph Agent_Module [agent.py]
+        Agent(Agent);
+        NodeManager[Node Manager];
+        QuadTree[QuadTree];
+    end
 
-    style Networks fill:#f9f,stroke:#333,stroke-width:2px;
-    style NodeManager fill:#ccf,stroke:#333,stroke-width:2px;
-    style Env fill:#cfc,stroke:#333,stroke-width:2px;
+    subgraph Environment_Module [env.py & utils]
+        Env[Environment];
+        Sensor[Sensor];
+        MotionModel[Motion Model];
+    end
 ```
 
 ### Core Module Functions
@@ -153,7 +154,7 @@ The project follows the CTDE paradigm, which can be broken down into these steps
     *   Each `Runner` starts an episode. Inside the episode, each `Agent` acts independently.
     *   An `Agent` creates a local observation of its surroundings using its `NodeManager`.
     *   It inputs this local observation into its copy of the shared `PolicyNet` to get its own action. It does **not** need to know the state of other agents to act.
-    *   This process is repeated for all agents in a loop.
+    - This process is repeated for all agents in a loop.
 
 3.  **Data Collection (in `runner.py`):** The `MultiAgentWorker` collects the `(state, action, reward, next_state)` trajectories from all agents throughout the episode and sends the complete data back to the `driver`.
 

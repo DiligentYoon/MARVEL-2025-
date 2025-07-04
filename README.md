@@ -61,43 +61,43 @@ This section provides a deeper insight into the project's architecture and the w
 The project is composed of several key modules that interact to create the multi-agent exploration and learning environment. The relationships can be visualized as follows:
 
 ```mermaid
-graph TD
-    subgraph "Driver (driver.py)"
-        TrainingLoop[Main Training Loop] --> ReplayBuffer{Replay Buffer}
-        TrainingLoop --> Networks[Policy & Q-Networks]
-        ReplayBuffer --> TrainingFunc[Training Function]
-        TrainingFunc --> Networks
-    end
+graph TD;
+    subgraph Driver;
+        TrainingLoop[Main Training Loop] --> ReplayBuffer{Replay Buffer};
+        TrainingLoop --> Networks[Policy & Q-Networks];
+        ReplayBuffer --> TrainingFunc[Training Function];
+        TrainingFunc --> Networks;
+    end;
 
-    subgraph "Ray Distributed Runners (runner.py)"
-        Runner(Runner) -- Manages --> Worker(MultiAgentWorker)
-        Networks -- Weights --> Runner
-        Worker -- Experiences --> ReplayBuffer
-    end
+    subgraph Runners;
+        Runner(Runner) -- Manages --> Worker(MultiAgentWorker);
+        Networks -- Weights --> Runner;
+        Worker -- Experiences --> ReplayBuffer;
+    end;
 
-    subgraph "Simulation Instance (multi_agent_worker.py)"
-        Worker -- Controls --> AgentList[Agent List]
-        Worker -- Manages --> Env[Environment (env.py)]
-    end
+    subgraph Simulation;
+        Worker -- Controls --> AgentList[Agent List];
+        Worker -- Manages --> Env[Environment];
+    end;
 
-    subgraph "Agent & Its Brain (agent.py)"
-        AgentList -- Contains multiple --> Agent(Agent)
-        Agent -- Uses --> Networks
-        Agent -- Uses --> NodeManager[Node Manager (node_manager.py)]
-        NodeManager -- Uses --> QuadTree[QuadTree (quads.py)]
-    end
+    subgraph Agent;
+        AgentList -- Contains multiple --> AgentInstance(Agent);
+        AgentInstance -- Uses --> Networks;
+        AgentInstance -- Uses --> NodeManager[Node Manager];
+        NodeManager -- Uses --> QuadTree[QuadTree];
+    end;
 
-    subgraph "Environment & Physics"
-        Env -- Updates --> BeliefMap[Belief Map]
-        Sensor[Sensor (sensor.py)] -- Updates --> BeliefMap
-        MotionModel[Motion Model (motion_model.py)] -- Constrains --> Agent
-        Agent -- Acts on --> Env
-        Env -- Provides --> RewardSignal{Reward & Done Signal}
-    end
+    subgraph Environment;
+        Env -- Updates --> BeliefMap[Belief Map];
+        Sensor[Sensor] -- Updates --> BeliefMap;
+        MotionModel[Motion Model] -- Constrains --> AgentInstance;
+        AgentInstance -- Acts on --> Env;
+        Env -- Provides --> RewardSignal{Reward & Done Signal};
+    end;
 
-    style Networks fill:#f9f,stroke:#333,stroke-width:2px
-    style NodeManager fill:#ccf,stroke:#333,stroke-width:2px
-    style Env fill:#cfc,stroke:#333,stroke-width:2px
+    style Networks fill:#f9f,stroke:#333,stroke-width:2px;
+    style NodeManager fill:#ccf,stroke:#333,stroke-width:2px;
+    style Env fill:#cfc,stroke:#333,stroke-width:2px;
 ```
 
 ### Core Module Functions

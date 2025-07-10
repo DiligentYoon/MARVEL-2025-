@@ -65,8 +65,8 @@ graph TD;
     Driver --> Runner;
     MultiAgentWorker --> Runner;
     Runner --> Driver;
-    MultiAgentWorker --> Agent;
-    MultiAgentWorker --> Env;
+    Agent --> MultiAgentWorker;
+    Env --> MultiAgentWorker;
     Agent --> PolicyNet;
     Env --> Sensor;
     Env --> MotionModel;
@@ -99,12 +99,6 @@ graph TD;
 
     subgraph Agent_Module [agent.py]
         Agent(Agent);
-    end
-
-    subgraph Environment_Module [env.py & utils]
-        Env[Environment];
-        Sensor[Sensor];
-        MotionModel[Motion Model];
     end
 ```
 

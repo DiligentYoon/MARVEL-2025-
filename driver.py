@@ -32,7 +32,7 @@ from utils.model import PolicyNet, QNet
 from utils.runner import RLRunner
 from parameter import *
 
-ray.init()
+ray.init(locals=True)
 print("Welcome to MARVEL!")
 
 writer = SummaryWriter(train_path)
@@ -49,6 +49,9 @@ def main():
     # use GPU/CPU for driver/worker
     device = torch.device('cuda') if USE_GPU_GLOBAL else torch.device('cpu')
     local_device = torch.device('cuda') if USE_GPU else torch.device('cpu')
+
+    device = torch.device("cpu")
+    local_device = torch.device("cpu")
 
     # initialize neural networks
     global_policy_net = PolicyNet(NODE_INPUT_DIM, EMBEDDING_DIM, NUM_ANGLES_BIN).to(device)

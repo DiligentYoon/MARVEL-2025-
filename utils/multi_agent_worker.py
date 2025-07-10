@@ -28,7 +28,6 @@ from utils.env import Env
 from utils.agent import Agent
 from utils.utils import *
 from utils.model import PolicyNet
-from utils.motion_model import compute_allowable_heading  
 
 if not os.path.exists(gifs_path):
     os.makedirs(gifs_path)
@@ -57,9 +56,9 @@ class MultiAgentWorker:
         for robot in self.robot_list:
             robot.update_state(self.env.belief_info, self.env.robot_locations[robot.id].copy())
 
-        prev_explored_rate = self.env.explored_rate
-
         for i in range(MAX_EPISODE_STEP):
+
+            # ============= Observation Setting & Action Sampling ===============
             observations = [robot.get_observation() for robot in self.robot_list]
             actions = []
             collisions = []
@@ -68,12 +67,14 @@ class MultiAgentWorker:
                 velocity, yaw_rate = robot.get_action(observation)
                 actions.append((velocity, yaw_rate))
                 collisions.append(False)
+                prev_collisions = collisions
 
             # =========== Transition with k(=sim_steps 파라미터) Decimation Step 수행 ===========
             for _ in range(self.sim_steps):
                 robot_locations_sim_step = []
                 robot_headings_sim_step = []
                 for robot_id, robot in enumerate(self.robot_list):
+                    # 한 step 진행
                     velocity, yaw_rate = actions[robot_id]
                     
                     # Update heading
@@ -87,51 +88,56 @@ class MultiAgentWorker:
                     delta_x = velocity * np.cos(heading_rad) * self.dt
                     delta_y = velocity * np.sin(heading_rad) * self.dt
                     new_location = robot.location + np.array([delta_x, delta_y])
-
-                    # Cartesian 좌표 -> Cell 좌표
-                    new_location_cell = get_cell_position_from_coords(new_location, self.env.belief_info)
-                    # Collision Detection 로직 : 충돌하지 않은 유효 상태일때만 업데이트
-                    if (0 <= new_location_cell[0] < self.env.belief_info.map.shape[1] and
-                        0 <= new_location_cell[1] < self.env.belief_info.map.shape[0] and
-                        self.env.belief_info.map[new_location_cell[1], new_location_cell[0]] == FREE):
-                        # Update environment and agent state
+                    
+                    # Collision 로직 : 충돌하지 않은 유효 상태일때만 업데이트
+                    if not collisions[robot_id]:
                         self.env.final_sim_step(new_location, robot.id)
                         robot.update_location(new_location)
                         robot.update_heading(new_heading)
                     else:
-                        collisions[robot_id] = True
                         new_location = robot.location
                         new_heading = robot.heading
                     
                     # bresenhem 알고리즘 기반, binary occupancy shared map 업데이트: 코드 재사용 가능
                     self.env.update_robot_belief(robot.location, robot.heading)
 
+                    # Plot용 History 저장
                     robot_locations_sim_step.append(robot.location)
                     robot_headings_sim_step.append(robot.heading)
+
+                # 한 스텝 진행 이후에 Collision Check -> 다음 decimation step에서 state update x
+                collisions = self.collision_check(prev_collisions)
+                prev_collisions = collisions
 
                 if self.save_image:
                     num_frame = i * self.sim_steps + _
                     self.plot_local_env_sim(num_frame, robot_locations_sim_step, robot_headings_sim_step)
 
 
-            # Reward calculation
-            current_explored_rate = self.env.explored_rate
-            reward = (current_explored_rate - prev_explored_rate) * 100 - 0.1 # Exploration reward and time penalty
-            prev_explored_rate = current_explored_rate
+            # ============= Reward Calculation ===============
+            rewards = []
+            for robot_id, robot in enumerate(self.robot_list):
+                reward = 0.0
+                rewards.append(reward)
 
-            if self.env.explored_rate > 0.99:
-                done = True
-            if done:
-                reward += 10
 
-            # At the end of the step, get the next observation
+            # ============= Setting Next Observation ===============
             next_observations = [robot.get_observation() for robot in self.robot_list]
 
-            # Save experience in each agent's episode buffer
+
+            # ============= Done Singal Check ================
+            if self.env.explored_rate > 0.99:
+                done = True
+                rewards = [r + 10 for r in rewards]
+
+
+            # Save experience in episode buffer of each agent
             for robot_id, robot in enumerate(self.robot_list):
-                obs = observations[robot_id]
-                action = actions[robot_id]
-                next_obs = next_observations[robot_id]
+                obs = torch.as_tensor(observations[robot_id], dtype=torch.float32, device=self.device)
+                action = torch.as_tensor(actions[robot_id], dtype=torch.long, device=self.device) # 행동은 보통 정수형
+                reward = torch.as_tensor(rewards[robot_id], dtype=torch.float32, device=self.device)
+                next_obs = torch.as_tensor(next_observations[robot_id], dtype=torch.float32, device=self.device)
+                done = torch.as_tensor(done, dtype=torch.bool, device=self.device)
                 robot.save_experience(obs, action, reward, next_obs, done)
 
             if done:
@@ -147,11 +153,9 @@ class MultiAgentWorker:
             make_gif(gifs_path, self.global_step, self.env.frame_files, self.env.explored_rate)
 
 
-
     # ====================================================================
     # ======================== plot 함수 =================================
     # ====================================================================
-
 
     def smooth_heading_change(self, prev_heading, heading, steps=10):
         # Ensure both angles are in the range [0, 360)
@@ -184,6 +188,26 @@ class MultiAgentWorker:
         heading_rad = np.radians(heading)
         return np.cos(heading_rad) * length, np.sin(heading_rad) * length
 
+
+    def collision_check(self, prev_collision):
+        collision = prev_collision
+        for robot_id, robot in self.robot_list:
+            # 이전 step에 collision이 발생하지 않은 로봇에 대해서만 수행
+            if not collision[robot_id]:
+                other_locations = [r.location for i, r in enumerate(self.robot_list) if i != robot_id]
+                other_cell = get_cell_position_from_coords(other_locations, robot.map_info)
+                current_cell = get_cell_position_from_coords(robot.location, robot.map_info)
+
+                wall_collision = (0 <= current_cell[0] < self.env.belief_info.map.shape[1] and
+                                0 <= current_cell[1] < self.env.belief_info.map.shape[0] and
+                                self.env.belief_info.map[current_cell[1], current_cell[0]] == FREE)
+            
+                drone_collision = np.any(np.all(other_cell == current_cell, axis=1))
+
+                # Collision이 일어났는지만 check
+                collision[robot_id] = wall_collision and drone_collision
+
+        return collision
 
 
     def plot_local_env_sim(self, step, robot_locations, robot_headings):

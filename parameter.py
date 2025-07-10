@@ -27,12 +27,12 @@ gifs_path = f'gifs/{FOLDER_NAME}'
 
 # save training data
 SUMMARY_WINDOW = 32
-LOAD_MODEL = True  # do you want to load the model trained before
+LOAD_MODEL = False  # do you want to load the model trained before
 SAVE_IMG_GAP = 1000
 NUM_EPISODE_BUFFER = 40
 
 # Sim parameters
-N_AGENTS = 4
+N_AGENTS = 2
 USE_CONTINUOUS_SIM = True
 NUM_SIM_STEPS = 6
 VELOCITY = 1
@@ -71,7 +71,7 @@ MINIMUM_BUFFER_SIZE = 2000
 BATCH_SIZE = 256
 LR = 1e-5
 GAMMA = 1
-NUM_META_AGENT = 18
+NUM_META_AGENT = 3
 
 # network parameters
 NODE_INPUT_DIM = 6

@@ -1,0 +1,43 @@
+name: marvel
+channels:
+  - pytorch
+  - conda-forge
+  - anaconda
+  - defaults
+dependencies:
+  # 1. 기본 Python 버전 지정
+  - python=3.11
+
+  # 2. 핵심 머신러닝/데이터 분석 라이브러리
+  - pytorch
+  - torchvision
+  - torchaudio
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - scikit-image
+  - matplotlib
+
+  # 3. 웹/서버 관련 라이브러리
+  - fastapi
+  - uvicorn
+  - aiohttp
+
+  # 4. 기타 주요 유틸리티
+  - pillow
+  - pyyaml
+  - requests
+  
+  # 5. Pip으로 설치해야 하는 패키지
+  - pip
+  - pip:
+    - ffmpeg-python==0.2.0
+    - future==1.0.0
+    - httptools==0.6.4
+    - py-spy==0.4.0
+    - python-dotenv==1.1.0
+    - ray==2.44.0
+    # - uvloop==0.21.0  # 윈도우에서 지원하지 않으므로 주석 처리 또는 삭제
+    - wandb==0.17.5
+    - websockets==15.0.1

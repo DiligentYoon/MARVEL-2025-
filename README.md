@@ -68,10 +68,12 @@ graph TD;
     MultiAgentWorker --> Agent;
     MultiAgentWorker --> Env;
     Agent --> PolicyNet;
-    Agent --> NodeManager;
-    NodeManager --> QuadTree;
     Env --> Sensor;
     Env --> MotionModel;
+
+    subgraph Node_Manager [node_manager.py]
+        Node[Node]
+        QuadTree[QuadTree]
 
     subgraph Driver_Module [driver.py]
         Driver[Main Training Loop];
@@ -90,8 +92,6 @@ graph TD;
 
     subgraph Agent_Module [agent.py]
         Agent(Agent);
-        NodeManager[Node Manager];
-        QuadTree[QuadTree];
     end
 
     subgraph Environment_Module [env.py & utils]

@@ -145,13 +145,15 @@ class Agent:
     def get_observation(self):
         # Return the agent's local occupancy grid map.
         # The map is centered around the agent's location.
+        shared_map = self.map_info.map
         local_map = self.updating_map_info.map
         # The input to the policy network should be a tensor.
+        shared_map_tensor = torch.FloatTensor(shared_map).unsqueeze(0).unsqueeze(0).to(self.device)
         local_map_tensor = torch.FloatTensor(local_map).unsqueeze(0).unsqueeze(0).to(self.device)
-        return local_map_tensor
+        return shared_map_tensor, local_map_tensor
 
 
-    def get_action(self, observation, greedy=False):
+    def get_action(self, observation):
         if observation is None:
             # Return a no-op action if observation is not ready
             return 0.0, 0.0 # velocity, yaw_rate

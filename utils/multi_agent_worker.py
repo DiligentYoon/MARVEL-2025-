@@ -41,6 +41,7 @@ class MultiAgentWorker:
         self.device = device
         self.fov = FOV
         self.sensor_range = SENSOR_RANGE
+        self.dt = DT
         self.sim_steps = NUM_SIM_STEPS
 
         self.env = Env(global_step, self.fov, self.sensor_range, plot=self.save_image)
@@ -61,15 +62,14 @@ class MultiAgentWorker:
         for i in range(MAX_EPISODE_STEP):
             observations = [robot.get_observation() for robot in self.robot_list]
             actions = []
+            collisions = []
             for robot_id, robot in enumerate(self.robot_list):
                 observation = observations[robot_id]
                 velocity, yaw_rate = robot.get_action(observation)
                 actions.append((velocity, yaw_rate))
-
+                collisions.append(False)
 
             # =========== Transition with k(=sim_steps 파라미터) Decimation Step 수행 ===========
-            # =========== Action Sampling Frequency /= Simulation step Frequency ===============
-            dt = 1.0 / self.sim_steps
             for _ in range(self.sim_steps):
                 robot_locations_sim_step = []
                 robot_headings_sim_step = []
@@ -77,17 +77,18 @@ class MultiAgentWorker:
                     velocity, yaw_rate = actions[robot_id]
                     
                     # Update heading
-                    new_heading = (robot.heading + yaw_rate * dt) % 360
+                    new_heading = (robot.heading + yaw_rate * self.dt) % 360
 
                     # Update location
                     heading_rad = np.radians(new_heading)
                     heading_rad = np.arctan2(np.sin(heading_rad), np.cos(heading_rad))
 
-                    # Check : Location 업데이트, Rotation 업데이트 중 무엇이 먼저인가 ?
-                    delta_x = velocity * np.cos(heading_rad) * dt
-                    delta_y = velocity * np.sin(heading_rad) * dt
+                    # Check : Location 업데이트, Rotation 업데이트 중 무엇이 선행 ?
+                    delta_x = velocity * np.cos(heading_rad) * self.dt
+                    delta_y = velocity * np.sin(heading_rad) * self.dt
                     new_location = robot.location + np.array([delta_x, delta_y])
 
+                    # Cartesian 좌표 -> Cell 좌표
                     new_location_cell = get_cell_position_from_coords(new_location, self.env.belief_info)
                     # Collision Detection 로직 : 충돌하지 않은 유효 상태일때만 업데이트
                     if (0 <= new_location_cell[0] < self.env.belief_info.map.shape[1] and
@@ -98,9 +99,11 @@ class MultiAgentWorker:
                         robot.update_location(new_location)
                         robot.update_heading(new_heading)
                     else:
+                        collisions[robot_id] = True
                         new_location = robot.location
                         new_heading = robot.heading
-
+                    
+                    # bresenhem 알고리즘 기반, binary occupancy shared map 업데이트: 코드 재사용 가능
                     self.env.update_robot_belief(robot.location, robot.heading)
 
                     robot_locations_sim_step.append(robot.location)
@@ -110,8 +113,6 @@ class MultiAgentWorker:
                     num_frame = i * self.sim_steps + _
                     self.plot_local_env_sim(num_frame, robot_locations_sim_step, robot_headings_sim_step)
 
-            # At the end of the step, get the next observation
-            next_observations = [robot.get_observation() for robot in self.robot_list]
 
             # Reward calculation
             current_explored_rate = self.env.explored_rate
@@ -123,7 +124,10 @@ class MultiAgentWorker:
             if done:
                 reward += 10
 
-            # Save experience for each agent
+            # At the end of the step, get the next observation
+            next_observations = [robot.get_observation() for robot in self.robot_list]
+
+            # Save experience in each agent's episode buffer
             for robot_id, robot in enumerate(self.robot_list):
                 obs = observations[robot_id]
                 action = actions[robot_id]

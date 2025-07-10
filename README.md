@@ -63,17 +63,23 @@ The project is composed of several key modules that interact to create the multi
 ```mermaid
 graph TD;
     Driver --> Runner;
+    MultiAgentWorker --> Runner;
     Runner --> Driver;
-    Runner --> MultiAgentWorker;
     MultiAgentWorker --> Agent;
     MultiAgentWorker --> Env;
     Agent --> PolicyNet;
     Env --> Sensor;
     Env --> MotionModel;
 
+
     subgraph Node_Manager [node_manager.py]
-        Node[Node]
-        QuadTree[QuadTree]
+        Node[Node];
+        QuadTree[QuadTree];
+
+    subgraph Env [env.py]
+        TrueMap[GroundTruthMapInfo];
+        BeliefMap[BeliefMap];
+        Sensor[Sensor];
 
     subgraph Driver_Module [driver.py]
         Driver[Main Training Loop];
@@ -88,6 +94,7 @@ graph TD;
 
     subgraph Simulation_Module [multi_agent_worker.py]
         MultiAgentWorker(MultiAgentWorker);
+        Motionmodel(MotionGenerator);
     end
 
     subgraph Agent_Module [agent.py]

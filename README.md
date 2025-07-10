@@ -66,7 +66,7 @@ graph TD;
     Runner --> Driver_Module;
     Agent --> MultiAgentWorker;
     Env --> MultiAgentWorker;
-    Agent --> PolicyNet;
+    Agent --> Model;
     Model --> Agent;
     Node_Manager --> MultiAgentWorker;
     Motionmodel --> MultiAgentWorker;
@@ -91,7 +91,8 @@ graph TD;
     subgraph Driver_Module [driver.py]
         Driver[Main Training Loop];
         ReplayBuffer{Replay Buffer};
-        TrainingFunc[Training Function];
+        RLAlgorithm[RLAlgorithm]
+        Logging[Logging];
     end
 
     subgraph Runner_Module [runner.py]

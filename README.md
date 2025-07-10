@@ -68,18 +68,18 @@ graph TD;
     Agent --> MultiAgentWorker;
     Env --> MultiAgentWorker;
     Agent --> PolicyNet;
-    Env --> Sensor;
-    Env --> MotionModel;
 
 
     subgraph Node_Manager [node_manager.py]
         Node[Node];
         QuadTree[QuadTree];
+    end
 
     subgraph Env [env.py]
         TrueMap[GroundTruthMapInfo];
         BeliefMap[BeliefMap];
         Sensor[Sensor];
+    end
 
     subgraph Driver_Module [driver.py]
         Driver[Main Training Loop];

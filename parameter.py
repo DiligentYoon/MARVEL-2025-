@@ -35,8 +35,8 @@ NUM_EPISODE_BUFFER = 40
 N_AGENTS = 4
 USE_CONTINUOUS_SIM = True
 NUM_SIM_STEPS = 6
-VELOCITY = 1
-YAW_RATE = 35 # in degrees
+VELOCITY = 0.5
+YAW_RATE = 15 # in degrees
 
 # Heading parameters
 FOV = 120   # in degrees
@@ -48,7 +48,6 @@ DRONE_HEIGHT = 2
 
 # map and planning resolution
 CELL_SIZE = 0.4  # meter
-NODE_RESOLUTION = 4.0  # meter
 FRONTIER_CELL_SIZE = 2 * CELL_SIZE
 
 # map representation
@@ -62,7 +61,7 @@ UTILITY_RANGE = 0.9 * SENSOR_RANGE
 MIN_UTILITY = 1
 
 # updating map range w.r.t the robot
-UPDATING_MAP_SIZE = 4 * SENSOR_RANGE + 4 * NODE_RESOLUTION
+UPDATING_MAP_SIZE = 4 * SENSOR_RANGE
 
 # training parameters
 MAX_EPISODE_STEP = 128

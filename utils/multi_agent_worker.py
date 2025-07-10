@@ -27,8 +27,6 @@ from matplotlib.patches import Wedge, FancyArrowPatch
 from utils.env import Env
 from utils.agent import Agent
 from utils.utils import *
-from utils.node_manager import NodeManager
-from utils.ground_truth_node_manager import GroundTruthNodeManager
 from utils.model import PolicyNet
 from utils.motion_model import compute_allowable_heading  
 
@@ -47,153 +45,90 @@ class MultiAgentWorker:
 
         self.env = Env(global_step, self.fov, self.sensor_range, plot=self.save_image)
         self.n_agents = N_AGENTS
-        self.node_manager = NodeManager(self.fov, self.sensor_range, plot=self.save_image)
-        self.ground_truth_node_manager = GroundTruthNodeManager(self.node_manager, self.env.ground_truth_info, self.sensor_range,
-                                                                device=self.device, plot=self.save_image)
 
-        self.robot_list = [Agent(i, policy_net, self.fov, self.env.angles[i], self.sensor_range, self.node_manager, self.ground_truth_node_manager, self.device, self.save_image) for i in
+        self.robot_list = [Agent(i, policy_net, self.fov, self.env.angles[i], self.sensor_range, self.device, self.save_image) for i in
                            range(self.n_agents)]
 
-        self.episode_buffer = []
         self.perf_metrics = dict()
-        for i in range(NUM_EPISODE_BUFFER):
-            self.episode_buffer.append([])
 
     def run_episode(self):
         done = False
         for robot in self.robot_list:
-            robot.update_graph(self.env.belief_info, self.env.robot_locations[robot.id].copy())
-        for robot in self.robot_list:    
-            robot.update_planning_state(self.env.robot_locations)
+            robot.update_state(self.env.belief_info, self.env.robot_locations[robot.id].copy())
+
+        prev_explored_rate = self.env.explored_rate
 
         for i in range(MAX_EPISODE_STEP):
-
-            selected_locations = []
-            dist_list = []
-            next_node_index_list = []
-            next_heading_index_list = []
-            for robot in self.robot_list:
-                observation = robot.get_observation()
-                ground_truth_observation = robot.ground_truth_node_manager.get_ground_truth_observation(robot.location, self.env.robot_locations)
-
-                robot.save_observation(observation)
-                robot.save_ground_truth_observation(ground_truth_observation)
-
-                next_location, next_node_index, action_index, next_heading_index = robot.select_next_waypoint(observation)
-
-                robot.save_action(action_index)
-
-                selected_locations.append(next_location)
-                dist_list.append(np.linalg.norm(next_location - robot.location))
-                next_node_index_list.append(next_node_index)
-                next_heading_index_list.append(next_heading_index)
-
-            selected_locations = np.array(selected_locations).reshape(-1, 2)
-            arriving_sequence = np.argsort(np.array(dist_list))
-            selected_locations_in_arriving_sequence = np.array(selected_locations)[arriving_sequence]
-
-            # Solve collision
-            for j, selected_location in enumerate(selected_locations_in_arriving_sequence):
-                solved_locations = selected_locations_in_arriving_sequence[:j]
-                while selected_location[0] + selected_location[1] * 1j in solved_locations[:, 0] + solved_locations[:, 1] * 1j:
-                    id = arriving_sequence[j]
-                    nearby_nodes = self.robot_list[id].node_manager.nodes_dict.nearest_neighbors(
-                        selected_location.tolist(), 25)
-                    for node in nearby_nodes:
-                        coords = node.data.coords
-                        if coords[0] + coords[1] * 1j in solved_locations[:, 0] + solved_locations[:, 1] * 1j:
-                            continue
-                        selected_location = coords
-                        break
-
-                    selected_locations_in_arriving_sequence[j] = selected_location
-                    selected_locations[id] = selected_location
+            observations = [robot.get_observation() for robot in self.robot_list]
+            actions = []
+            for robot_id, robot in enumerate(self.robot_list):
+                observation = observations[robot_id]
+                velocity, yaw_rate = robot.get_action(observation)
+                actions.append((velocity, yaw_rate))
 
 
-            # Compute simulation data
-            robot_locations_sim = []
-            robot_headings_sim = []
-            all_robots_heading_list = []
-            for k, (robot, next_location, next_heading_index) in enumerate(zip(self.robot_list, selected_locations, next_heading_index_list)):
-                robot_current_cell = get_cell_position_from_coords(robot.location, self.env.belief_info)
-                robot_cell = get_cell_position_from_coords(next_location, self.env.belief_info)
+            # =========== Transition with k(=sim_steps 파라미터) Decimation Step 수행 ===========
+            # =========== Action Sampling Frequency /= Simulation step Frequency ===============
+            dt = 1.0 / self.sim_steps
+            for _ in range(self.sim_steps):
+                robot_locations_sim_step = []
+                robot_headings_sim_step = []
+                for robot_id, robot in enumerate(self.robot_list):
+                    velocity, yaw_rate = actions[robot_id]
+                    
+                    # Update heading
+                    new_heading = (robot.heading + yaw_rate * dt) % 360
 
-                next_heading = next_heading_index*(360/NUM_ANGLES_BIN)
-                final_heading = compute_allowable_heading(robot.location, next_location, robot.heading, next_heading, robot.velocity, robot.yaw_rate)
+                    # Update location
+                    heading_rad = np.radians(new_heading)
+                    heading_rad = np.arctan2(np.sin(heading_rad), np.cos(heading_rad))
 
-                # Generate intermediate points
-                intermediate_cells = np.linspace(robot_current_cell, robot_cell, self.sim_steps+1)[1:] 
+                    # Check : Location 업데이트, Rotation 업데이트 중 무엇이 먼저인가 ?
+                    delta_x = velocity * np.cos(heading_rad) * dt
+                    delta_y = velocity * np.sin(heading_rad) * dt
+                    new_location = robot.location + np.array([delta_x, delta_y])
 
-                # Round to nearest integer to get valid cell coordinates
-                intermediate_cells = np.round(intermediate_cells).astype(int)
-                intermediate_headings = self.smooth_heading_change(robot.heading, final_heading, steps=self.sim_steps)
+                    new_location_cell = get_cell_position_from_coords(new_location, self.env.belief_info)
+                    # Collision Detection 로직 : 충돌하지 않은 유효 상태일때만 업데이트
+                    if (0 <= new_location_cell[0] < self.env.belief_info.map.shape[1] and
+                        0 <= new_location_cell[1] < self.env.belief_info.map.shape[0] and
+                        self.env.belief_info.map[new_location_cell[1], new_location_cell[0]] == FREE):
+                        # Update environment and agent state
+                        self.env.final_sim_step(new_location, robot.id)
+                        robot.update_location(new_location)
+                        robot.update_heading(new_heading)
+                    else:
+                        new_location = robot.location
+                        new_heading = robot.heading
 
-                robot_locations_sim.append(intermediate_cells)
-                robot_headings_sim.append(intermediate_headings)
-                all_robots_heading_list.append(final_heading)
+                    self.env.update_robot_belief(robot.location, robot.heading)
 
-                robot.update_heading(final_heading)
+                    robot_locations_sim_step.append(robot.location)
+                    robot_headings_sim_step.append(robot.heading)
 
-            for l in range(self.sim_steps):
-                robot_location_sim_step = []
-                robot_heading_sim_step = []
-                for q in range(self.n_agents):
-                    self.env.update_robot_belief(robot_locations_sim[q][l], robot_headings_sim[q][l])
-                    robot_location_sim_step.append(robot_locations_sim[q][l])
-                    robot_heading_sim_step.append(robot_headings_sim[q][l])
-                
                 if self.save_image:
-                    num_frame = i * self.sim_steps + l
-                    self.plot_local_env_sim(num_frame, robot_location_sim_step, robot_heading_sim_step)
+                    num_frame = i * self.sim_steps + _
+                    self.plot_local_env_sim(num_frame, robot_locations_sim_step, robot_headings_sim_step)
 
-            reward_list = []
-            for robot, next_location, next_node_index in zip(self.robot_list, selected_locations, next_node_index_list):
-                self.env.final_sim_step(next_location, robot.id)
+            # At the end of the step, get the next observation
+            next_observations = [robot.get_observation() for robot in self.robot_list]
 
-                node = self.node_manager.nodes_dict.find((next_location[0], next_location[1])).data
-                observable_frontiers = node.observable_frontiers
-                observable_frontiers = np.array(list(observable_frontiers))
-                if observable_frontiers.shape[0] > 0:
- 
-                    coords = np.array(node.coords)
+            # Reward calculation
+            current_explored_rate = self.env.explored_rate
+            reward = (current_explored_rate - prev_explored_rate) * 100 - 0.1 # Exploration reward and time penalty
+            prev_explored_rate = current_explored_rate
 
-                    delta = observable_frontiers - coords
-                    angles = np.degrees(np.arctan2(delta[:, 1], delta[:, 0]) % (2 * np.pi))
-
-                    angle_diff = (angles - robot.heading + 180) % 360 - 180
-                    current_observable_frontiers = observable_frontiers[np.abs(angle_diff) <= robot.fov / 2]
- 
-                    utility_reward = len(current_observable_frontiers) / ((2 * self.sensor_range * 3.14 // FRONTIER_CELL_SIZE) / (360/robot.fov))    
-
-                else:
-                    utility_reward = 0
-
-                preferred_angle = node.highest_utility_angle
-                if preferred_angle == -360:
-                    angle_reward = 0
-                else:
-                    angle_reward = np.cos(np.radians(robot.heading - preferred_angle))
-
-                trajectory_angle = np.degrees(np.arctan2(next_location[1] - robot.location[1], 
-                                               next_location[0] - robot.location[0]) % (2 * np.pi))
-                trajectory_reward = np.cos(np.radians(robot.heading - trajectory_angle)) 
-                reward_list.append(utility_reward + trajectory_reward)  
-
-                robot.update_graph(self.env.belief_info, self.env.robot_locations[robot.id].copy())
-
-            if self.robot_list[0].utility.sum() == 0:
+            if self.env.explored_rate > 0.99:
                 done = True
-
-            team_reward = self.env.calculate_team_reward() - 0.5
             if done:
-                team_reward += 10
+                reward += 10
 
-            curr_node_indices = np.array([robot.current_index for robot in self.robot_list])
-            for robot, reward in zip(self.robot_list, reward_list):
-                robot.save_reward(reward + team_reward)
-                robot.save_all_indices(curr_node_indices)
-                robot.update_planning_state(self.env.robot_locations)
-                robot.save_done(done)
+            # Save experience for each agent
+            for robot_id, robot in enumerate(self.robot_list):
+                obs = observations[robot_id]
+                action = actions[robot_id]
+                next_obs = next_observations[robot_id]
+                robot.save_experience(obs, action, reward, next_obs, done)
 
             if done:
                 break
@@ -203,18 +138,16 @@ class MultiAgentWorker:
         self.perf_metrics['explored_rate'] = self.env.explored_rate
         self.perf_metrics['success_rate'] = done
 
-        # save episode buffer
-        for robot in self.robot_list:
-            observation = robot.get_observation()
-            ground_truth_observation = robot.ground_truth_node_manager.get_ground_truth_observation(robot.location, self.env.robot_locations)
-            robot.save_next_observations(observation, next_node_index_list)
-            robot.save_next_ground_truth_observations(ground_truth_observation)
-            for i in range(len(self.episode_buffer)):
-                self.episode_buffer[i] += robot.episode_buffer[i]
-
         # save gif
         if self.save_image:
             make_gif(gifs_path, self.global_step, self.env.frame_files, self.env.explored_rate)
+
+
+
+    # ====================================================================
+    # ======================== plot 함수 =================================
+    # ====================================================================
+
 
     def smooth_heading_change(self, prev_heading, heading, steps=10):
         # Ensure both angles are in the range [0, 360)
@@ -237,13 +170,17 @@ class MultiAgentWorker:
         # Ensure the final heading is exactly the target heading
         intermediate_headings.append(heading)
         return intermediate_headings
-            
+
+
+
     def heading_to_vector(self, heading, length=25):
         # Convert heading to vector
         if isinstance(heading, (list, np.ndarray)):
             heading = heading[0]
         heading_rad = np.radians(heading)
         return np.cos(heading_rad) * length, np.sin(heading_rad) * length
+
+
 
     def plot_local_env_sim(self, step, robot_locations, robot_headings):
         plt.switch_backend('agg')
@@ -338,13 +275,25 @@ class MultiAgentWorker:
         frame = '{}/{}_{}_samples.png'.format(gifs_path, self.global_step, step)
         self.env.frame_files.append(frame)
 
+
+
 if __name__ == '__main__':
     from parameter import *
     import torch
-    policy_net = PolicyNet(NODE_INPUT_DIM, EMBEDDING_DIM, NUM_ANGLES_BIN)
+    # The input shape for the CNN is (height, width)
+    # The map size needs to be an integer for the model input shape.
+    map_size = int(UPDATING_MAP_SIZE / CELL_SIZE)
+    map_input_shape = (map_size, map_size)
+    action_dim = 2 # velocity and yaw_rate
+
+    policy_net = PolicyNet(map_input_shape, EMBEDDING_DIM, action_dim)
     if LOAD_MODEL:
-        checkpoint = torch.load(load_path + '/checkpoint.pth', map_location='cpu')
-        policy_net.load_state_dict(checkpoint['policy_model'])
-        print('Policy loaded!')
+        try:
+            checkpoint = torch.load(load_path + '/checkpoint.pth', map_location='cpu')
+            policy_net.load_state_dict(checkpoint['policy_model'])
+            print('Policy loaded!')
+        except FileNotFoundError:
+            print("Checkpoint not found, using randomly initialized policy.")
+
     worker = MultiAgentWorker(0, policy_net, 888, 'cpu', True)
     worker.run_episode()

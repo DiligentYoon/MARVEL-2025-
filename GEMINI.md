@@ -6,25 +6,34 @@ This document summarizes the key architectural insights and workflow of the MARV
 
 The project is built on a **Centralized Training, Decentralized Execution (CTDE)** paradigm.
 
--   **Centralized Training**: A single, master process (`driver.py`) aggregates experiences from all agents and updates one central set of neural networks. This allows for stable and efficient learning.
--   **Decentralized Execution**: During simulation, each agent acts autonomously based on its own local observations. It uses a copy of the centrally-trained policy but does not require information about other agents to make a decision.
+-   **Centralized Training**: A single, master process (`driver.py`) aggregates experiences from all agents and updates one central set of neural networks (`PolicyNet`, `QNet1`, `QNet2`). This allows for stable and efficient learning.
+-   **Decentralized Execution**: During simulation, each agent acts autonomously based on its own local observations. `RLRunner` (Ray actors) manage the simulation and collect experiences.
 
 ## 2. Key Concepts & Mechanisms
 
 ### Parameter Sharing
-All agents in a simulation share the exact same neural network instances (`PolicyNet`, `QNet`).
+All agents in a simulation share the exact same neural network instances (`PolicyNet`).
 
--   **Evidence**: `driver.py` initializes only one set of networks. These network weights are then distributed to all `runner.py` instances, which in turn pass the same network reference to every `Agent` they manage.
+-   **Evidence**: `driver.py` initializes the networks. The `PolicyNet` weights are then distributed to all `RLRunner` instances, which in turn pass the same network reference to every `Agent` they manage. `QNet` instances are used centrally in `driver.py` for training.
 -   **Benefit**: This approach is highly scalable and promotes generalization, as the experience of every agent contributes to the learning of a single, robust policy.
 
-### Intelligent Action Space Sampling
-A critical feature of this project is how it handles the potentially massive action space (Waypoint × Heading).
+### Continuous Action Space
+The project utilizes a continuous action space for agent control.
 
--   **Problem**: A naive action space would be too large to learn efficiently.
--   **Solution**: The `agent.py:compute_best_heading` function intelligently prunes the action space. For each potential waypoint (neighboring node), it samples a small number (`num_heading_candidates`) of the most promising headings.
-    -   If the node has observable frontiers, it samples headings that maximize frontier visibility.
-    -   If not, it samples headings that align with the A* path toward the next high-utility goal.
--   **Result**: The `PolicyNet` only needs to choose from a drastically reduced, high-quality set of candidate actions (`num_neighbors * num_heading_candidates`).
+-   **Mechanism**: Instead of discrete waypoints and headings, the `agent.py:get_action` function outputs `velocity_scale` and `yaw_rate_scale`. These values are then scaled by `MAX_VELOCITY` and `MAX_YAW_RATE` (defined in `parameter.py`) to determine the agent's movement.
+
+### Overlap Reward
+A novel reward mechanism is introduced to encourage diverse exploration among agents.
+
+-   **Mechanism**: The `agent.py:calculate_overlap_reward` function computes a reward based on the unique sensed area of each agent, penalizing overlapping sensing regions. This promotes agents exploring different parts of the environment.
+
+### Training Algorithms (`TRAIN_ALGO`)
+The `TRAIN_ALGO` parameter in `parameter.py` dictates the specific training algorithm and the structure of observations used during training.
+
+-   **`TRAIN_ALGO = 0`**: Standard SAC (Soft Actor-Critic).
+-   **`TRAIN_ALGO = 1`**: Multi-Agent Actor-Critic (MAAC), incorporating information about other agents' states.
+-   **`TRAIN_ALGO = 2`**: Ground Truth (GT) observations, using full environment information for training.
+-   **`TRAIN_ALGO = 3`**: Combines MAAC and Ground Truth observations.
 
 ## 3. Module Breakdown & Workflow
 
@@ -36,20 +45,14 @@ The overall workflow follows the CTDE model, orchestrated by the `driver`.
 graph TD;
     %% Node Declarations
     nodeDriverLoop("Main Training Loop");
-    nodeReplayBuffer{"Replay Buffer"};
+    nodeReplayBuffer{"Experience Buffer"};
     nodeNetworks["Policy & Q-Networks"];
-    nodeTrainingFunc["Training Function"];
-    nodeRunner("Runner");
-    nodeWorker("MultiAgentWorker");
-    nodeAgentList["Agent List"];
-    nodeEnv["Environment"];
+    nodeTrainingFunc["Training Function (SAC)"];
+    nodeRLRunner("RLRunner (Ray Actor)");
+    nodeMultiAgentWorker("MultiAgentWorker");
     nodeAgentInstance("Agent");
-    nodeNodeManager["Node Manager"];
-    nodeQuadTree["QuadTree"];
-    nodeBeliefMap["Belief Map"];
-    nodeSensor["Sensor"];
-    nodeMotionModel["Motion Model"];
-    nodeRewardSignal{"Reward & Done Signal"};
+    nodeEnv("Environment (Env)");
+    nodeParameter("Parameter Configuration");
 
     %% Subgraph Grouping
     subgraph Driver [driver.py]
@@ -59,59 +62,62 @@ graph TD;
         nodeTrainingFunc;
     end;
 
-    subgraph Runner [runner.py]
-        nodeRunner;
-        nodeWorker;
+    subgraph RemoteExecution [Ray Actors]
+        nodeRLRunner;
+        nodeMultiAgentWorker;
     end;
 
-    subgraph Simulation [multi_agent_worker.py]
-        nodeAgentList;
+    subgraph AgentSimulation [Simulation Components]
+        nodeAgentInstance;
         nodeEnv;
     end;
 
-    subgraph Agent [agent.py]
-        nodeAgentInstance;
-        nodeNodeManager;
-        nodeQuadTree;
-    end;
-
-    subgraph Environment [env.py & utils]
-        nodeBeliefMap;
-        nodeSensor;
-        nodeMotionModel;
-        nodeRewardSignal;
-    end;
+    nodeParameter;
 
     %% Links
-    nodeDriverLoop --> nodeReplayBuffer;
-    nodeDriverLoop --> nodeNetworks;
-    nodeReplayBuffer --> nodeTrainingFunc;
-    nodeTrainingFunc --> nodeNetworks;
-    nodeRunner -- "Manages" --> nodeWorker;
-    nodeNetworks -- "Weights" --> nodeRunner;
-    nodeWorker -- "Experiences" --> nodeReplayBuffer;
-    nodeWorker -- "Controls" --> nodeAgentList;
-    nodeWorker -- "Manages" --> nodeEnv;
-    nodeAgentList -- "Contains multiple" --> nodeAgentInstance;
+    nodeDriverLoop -- "Initializes & Manages" --> nodeNetworks;
+    nodeDriverLoop -- "Manages" --> nodeReplayBuffer;
+    nodeDriverLoop -- "Distributes Weights to" --> nodeRLRunner;
+    nodeDriverLoop -- "Collects Experiences from" --> nodeRLRunner;
+    nodeDriverLoop -- "Performs" --> nodeTrainingFunc;
+    nodeTrainingFunc -- "Updates" --> nodeNetworks;
+    nodeReplayBuffer -- "Feeds" --> nodeTrainingFunc;
+
+    nodeRLRunner -- "Manages" --> nodeMultiAgentWorker;
+    nodeRLRunner -- "Receives Weights from" --> nodeDriverLoop;
+    nodeRLRunner -- "Sends Experiences to" --> nodeDriverLoop;
+
+    nodeMultiAgentWorker -- "Manages Multiple" --> nodeAgentInstance;
+    nodeMultiAgentWorker -- "Interacts with" --> nodeEnv;
+    nodeMultiAgentWorker -- "Collects Experiences" --> nodeRLRunner;
+
     nodeAgentInstance -- "Uses" --> nodeNetworks;
-    nodeAgentInstance -- "Uses" --> nodeNodeManager;
-    nodeNodeManager -- "Uses" --> nodeQuadTree;
-    nodeEnv -- "Updates" --> nodeBeliefMap;
-    nodeSensor -- "Updates" --> nodeBeliefMap;
-    nodeMotionModel -- "Constrains" --> nodeAgentInstance;
     nodeAgentInstance -- "Acts on" --> nodeEnv;
-    nodeEnv -- "Provides" --> nodeRewardSignal;
+    nodeAgentInstance -- "Calculates" --> nodeAgentInstance; %% Self-loop for overlap reward
+
+    nodeEnv -- "Provides Observations & Rewards" --> nodeMultiAgentWorker;
+
+    nodeParameter -- "Configures" --> nodeDriverLoop;
+    nodeParameter -- "Configures" --> nodeRLRunner;
+    nodeParameter -- "Configures" --> nodeMultiAgentWorker;
+    nodeParameter -- "Configures" --> nodeAgentInstance;
+    nodeParameter -- "Configures" --> nodeEnv;
 
     %% Styles
     style nodeNetworks fill:#f9f,stroke:#333,stroke-width:2px;
-    style nodeNodeManager fill:#ccf,stroke:#333,stroke-width:2px;
-    style nodeEnv fill:#cfc,stroke:#333,stroke-width:2px;
+    style nodeRLRunner fill:#ccf,stroke:#333,stroke-width:2px;
+    style nodeMultiAgentWorker fill:#cfc,stroke:#333,stroke-width:2px;
+    style nodeAgentInstance fill:#ffc,stroke:#333,stroke-width:2px;
+    style nodeEnv fill:#cff,stroke:#333,stroke-width:2px;
+    style nodeParameter fill:#fcc,stroke:#333,stroke-width:2px;
 ```
 
 ### Execution & Training Flow
 
-1.  **Distribution (`driver.py`)**: The `driver` distributes the current network weights to all `Runner` actors.
-2.  **Execution (`runner.py` -> `multi_agent_worker.py` -> `agent.py`)**: Each `Runner` executes a simulation episode. Inside, each `Agent` uses the shared policy to decide its action based on its local graph-based observation from its `NodeManager`.
-3.  **Collection (`runner.py` -> `driver.py`)**: The `Runner` collects the `(s, a, r, s')` trajectories from all its agents and sends them back to the `driver`.
-4.  **Aggregation (`driver.py`)**: The `driver` stores these experiences in the central `ReplayBuffer`.
-5.  **Training (`driver.py`)**: The `driver` samples a mini-batch from the `ReplayBuffer` and updates the central networks. The cycle then repeats.
+1.  **Configuration (`parameter.py`)**: All simulation and training parameters are defined in `parameter.py`.
+2.  **Distribution (`driver.py`)**: The `driver` initializes `PolicyNet`, `QNet1`, and `QNet2`. It then distributes the current `PolicyNet` weights to all `RLRunner` actors.
+3.  **Execution (`RLRunner` -> `MultiAgentWorker` -> `Agent`)**: Each `RLRunner` executes a simulation episode. Inside, a `MultiAgentWorker` manages the environment and multiple `Agent` instances. Each `Agent` uses the shared `PolicyNet` to decide its continuous actions (velocity and yaw rate) based on its local observation. Agents also calculate an `overlap_reward` to encourage diverse exploration.
+4.  **Collection (`RLRunner` -> `driver.py`)**: The `RLRunner` collects the `(observation, action, reward, next_observation, done)` trajectories from all its agents. The structure of `observation` and `next_observation` can vary based on the `TRAIN_ALGO` parameter, potentially including ground truth or multi-agent information. These experiences are then sent back to the `driver`.
+5.  **Aggregation (`driver.py`)**: The `driver` stores these experiences in a central `experience_buffer` (replay buffer).
+6.  **Training (`driver.py`)**: The `driver` samples a mini-batch from the `experience_buffer` and updates the central `PolicyNet`, `QNet1`, `QNet2`, and `log_alpha` using the Soft Actor-Critic (SAC) algorithm. The cycle then repeats.
+7.  **Logging & Checkpointing (`driver.py`)**: Training metrics are logged to TensorBoard and WandB. Model checkpoints are periodically saved.

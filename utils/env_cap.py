@@ -23,7 +23,7 @@ class Env:
 
         self.robot_belief = np.ones(self.ground_truth_size) * 127
         self.belief_origin_x = -np.round(initial_cell[0] * self.cell_size, 1)   # meter
-        self.belief_origin_y = -np.round(initial_cell[1] * self.cell_size, 1)  # meter
+        self.belief_origin_y = -np.round(initial_cell[1] * self.cell_size, 1)   # meter
 
         self.sensor_range = sensor_range  # meter
         self.explored_rate = 0

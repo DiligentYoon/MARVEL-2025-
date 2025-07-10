@@ -196,91 +196,42 @@ class Decoder(nn.Module):
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, node_dim, embedding_dim, num_angles_bin):
+    def __init__(self, map_input_shape, embedding_dim, action_dim):
         super(PolicyNet, self).__init__()
-
-        # Graph Encoder
-        self.initial_embedding = nn.Linear(node_dim, embedding_dim)
-        self.encoder = Encoder(embedding_dim=embedding_dim, n_head=4, n_layer=6)
-
-        # Local frontiers distribution encoder
-        self.frontiers_embedding =  nn.Conv1d(num_angles_bin, embedding_dim, kernel_size=3, padding=1)
-        self.node_frontiers_embedding = nn.Linear(embedding_dim * 2, embedding_dim)
-
-        # Decoder
-        self.decoder = Decoder(embedding_dim=embedding_dim, n_head=4, n_layer=1)
-        self.current_embedding = nn.Linear(embedding_dim * 2, embedding_dim)
-
-        # Heading layer
-        self.best_headings_embedding = nn.Linear(num_angles_bin, embedding_dim)
-        self.visited_headings_embedding = nn.Linear(num_angles_bin, embedding_dim)
-        self.neighboring_node_embedding = nn.Linear(embedding_dim * 3, embedding_dim)
-
-        # pointer
-        self.pointer = SingleHeadAttention(embedding_dim)
-
-    def encode_graph(self, node_inputs, node_padding_mask, edge_mask, frontier_distribution):
-        node_feature = self.initial_embedding(node_inputs)
-        enhanced_node_feature = self.encoder(src=node_feature,
-                                                         key_padding_mask=node_padding_mask,
-                                                         attn_mask=edge_mask)
         
-        frontier_distribution = frontier_distribution.permute(0, 2, 1)
-        frontiers_feature = self.frontiers_embedding(frontier_distribution)
-        frontiers_feature = frontiers_feature.permute(0, 2, 1)
-
-        enhanced_node_feature = self.node_frontiers_embedding(torch.cat((enhanced_node_feature, frontiers_feature), dim=-1))
-
-        return enhanced_node_feature
-
-    def decode_state(self, enhanced_node_feature, current_index, node_padding_mask):
-        embedding_dim = enhanced_node_feature.size()[2]
-        current_node_feature = torch.gather(enhanced_node_feature, 1,
-                                                  current_index.repeat(1, 1, embedding_dim))
-        enhanced_current_node_feature, _ = self.decoder(current_node_feature,
-                                                                    enhanced_node_feature,
-                                                                    node_padding_mask)
-
-        return current_node_feature, enhanced_current_node_feature
-
-    def output_policy(self, current_node_feature, enhanced_current_node_feature,
-                      enhanced_node_feature, current_edge, edge_padding_mask, headings_visited, neighbor_best_headings):
+        self.map_input_shape = map_input_shape
         
-        embedding_dim = enhanced_node_feature.size()[2]
-        batch_size = enhanced_node_feature.size()[0]
-        num_best_headings = neighbor_best_headings.size()[2]
-        current_state_feature = self.current_embedding(torch.cat((enhanced_current_node_feature,
-                                                                  current_node_feature), dim=-1))
+        # CNN Encoder for Occupancy Grid Map
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+        
+        # Calculate the flattened size after the CNN layers
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 1, *self.map_input_shape)
+            flattened_size = self.encoder(dummy_input).shape[1]
+            
+        # Actor Head
+        self.actor_head = nn.Sequential(
+            nn.Linear(flattened_size, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, action_dim),
+            nn.Tanh()  # To scale the output (e.g., direction and distance) between -1 and 1
+        )
 
-        neighboring_feature = torch.gather(enhanced_node_feature, 1,
-                                           current_edge.repeat(1, 1, embedding_dim))     
+    def forward(self, local_map_tensor):
+        # Encode the map
+        map_embedding = self.encoder(local_map_tensor)
+        
+        # Get the action from the actor head
+        action = self.actor_head(map_embedding)
+        
+        return action
 
-        enhanced_neighbor_best_headings = self.best_headings_embedding(neighbor_best_headings)  
-        all_headings_visited = self.visited_headings_embedding(headings_visited)              
-        all_neighbor_headings_visited = torch.gather(all_headings_visited, 1,
-                                           current_edge.repeat(1, 1, embedding_dim))         
-
-        neighboring_nodes_feature = neighboring_feature.unsqueeze(2).repeat(1, 1, num_best_headings, 1)                
-        neighbor_headings_visited = all_neighbor_headings_visited.unsqueeze(2).repeat(1, 1, num_best_headings, 1)       
-
-        enhanced_neighbor_features = self.neighboring_node_embedding(torch.cat((neighboring_nodes_feature, neighbor_headings_visited,
-                                                                                enhanced_neighbor_best_headings), dim=-1)).reshape(batch_size, -1, embedding_dim)      
-     
-        current_mask = edge_padding_mask.unsqueeze(-1).repeat(1, 1, 1, num_best_headings).reshape(batch_size, 1, -1)
-        logp = self.pointer(current_state_feature, enhanced_neighbor_features, current_mask)
-        logp = logp.squeeze(1)
-
-        return logp
-
-    def forward(self, node_inputs, node_padding_mask, edge_mask, current_index,
-                current_edge, edge_padding_mask, frontier_distribution, headings_visited, neighbor_best_headings):
-        enhanced_node_feature = self.encode_graph(node_inputs, node_padding_mask, edge_mask, frontier_distribution)
-        current_node_feature, enhanced_current_node_feature = self.decode_state(
-            enhanced_node_feature, current_index, node_padding_mask)
-        logp = self.output_policy(current_node_feature, enhanced_current_node_feature,
-                                  enhanced_node_feature, current_edge, edge_padding_mask, headings_visited, neighbor_best_headings)
-
-        return logp
 
 
 class QNet(nn.Module):

@@ -63,12 +63,20 @@ The project is composed of several key modules that interact to create the multi
 ```mermaid
 graph TD;
     Driver --> Runner;
-    MultiAgentWorker --> Runner;
+    Simulation_Module --> Runner;
     Runner --> Driver;
     Agent --> MultiAgentWorker;
     Env --> MultiAgentWorker;
     Agent --> PolicyNet;
+    Model --> Agent;
+    Node_Manager --> MultiAgentWorker;
+    MotionGenerator --> MultiAgentWorker;
 
+
+    subgraph Model [model.py]
+        PolicyNet[PolicyNet]
+        QNet[QNet]
+    end
 
     subgraph Node_Manager [node_manager.py]
         Node[Node];
@@ -98,6 +106,7 @@ graph TD;
     end
 
     subgraph Agent_Module [agent.py]
+
         Agent(Agent);
     end
 ```

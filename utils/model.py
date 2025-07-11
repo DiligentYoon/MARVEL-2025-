@@ -173,17 +173,6 @@ class DecoderLayer(nn.Module):
         return h2, w
 
 
-class Encoder(nn.Module):
-    def __init__(self, embedding_dim=128, n_head=8, n_layer=1):
-        super(Encoder, self).__init__()
-        self.layers = nn.ModuleList(EncoderLayer(embedding_dim, n_head) for i in range(n_layer))
-
-    def forward(self, src, key_padding_mask=None, attn_mask=None):
-        for layer in self.layers:
-            src = layer(src, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
-        return src
-
-
 class Decoder(nn.Module):
     def __init__(self, embedding_dim=128, n_head=8, n_layer=1):
         super(Decoder, self).__init__()
@@ -195,42 +184,94 @@ class Decoder(nn.Module):
         return tgt, w
 
 
-class PolicyNet(nn.Module):
-    def __init__(self, map_input_shape, embedding_dim, action_dim):
-        super(PolicyNet, self).__init__()
-        
-        self.map_input_shape = map_input_shape
-        
-        # CNN Encoder for Occupancy Grid Map
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=8, stride=4),
+class Encoder(nn.Module):
+    def __init__(self, in_channel, in_features, out_features, map_input_shape):
+        super(Encoder, self).__init__()
+        self.encoder_cnn = nn.Sequential(
+            nn.Sequential(
+            nn.Conv2d(in_channel, 16, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=4, stride=2),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
             nn.Flatten(),
-        )
-        
-        # Calculate the flattened size after the CNN layers
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, 1, *self.map_input_shape)
-            flattened_size = self.encoder(dummy_input).shape[1]
-            
-        # Actor Head
-        self.actor_head = nn.Sequential(
-            nn.Linear(flattened_size, embedding_dim),
-            nn.ReLU(),
-            nn.Linear(embedding_dim, action_dim),
-            nn.Tanh()  # To scale the output (e.g., direction and distance) between -1 and 1
+            )   
         )
 
-    def forward(self, local_map_tensor):
-        # Encode the map
-        map_embedding = self.encoder(local_map_tensor)
+        self.cnn_output_size = _get_conv_output_size(self.encoder_cnn, in_channel, map_input_shape)
+        self.mlp_output_size = out_features
+        self.total_latent_size = self.cnn_output_size + self.mlp_output_size
+
+        self.encoder_mlp = nn.Sequential(
+            nn.Linear(in_features, 64),
+            nn.ReLU(),
+            nn.Linear(64, out_features)
+        )
+
+    def forward(self, obs):
+        x1 = obs["map"]
+        x2 = obs["numerical"]
+        z_cnn = self.encoder_cnn(x1)
+        z_mlp = self.encoder_mlp(x2.squeeze(1)).unsqueeze(0)
+
+        return torch.cat((z_cnn, z_mlp), dim=1)
+
+
+
+class PolicyNet(nn.Module):
+    def __init__(self, in_channel_team, in_features_team, out_features_team,
+                 in_channel_indi, in_features_indi, out_features_indi,
+                 map_input_shape_team, map_input_shape_indi,
+                 embedding_dim, action_dim):
+        """
+        PolicyNet 초기화
+        :param in_channel_team: 팀 관측용 맵의 채널 수
+        :param in_channel_indi: 개인 관측용 맵의 채널 수
+        :param map_input_shape_team: 맵의 (높이, 너비) ex) (250, 250)
+        :param in_features_team: 팀 관측용 수치 데이터의 피쳐 수
+        :param in_features_indi: 개인 관측용 수치 데이터의 피쳐 수
+        :param embedding_dim: 임베딩 레이어의 차원
+        :param action_dim: 최종 행동의 차원
+        """
+        super(PolicyNet, self).__init__()
         
-        # Get the action from the actor head
-        action = self.actor_head(map_embedding)
+        # --- 각 Branch 정의 ---
+        self.team_encoder = Encoder(in_channel_team, in_features_team, out_features_team, map_input_shape_team)
+        self.indi_encoder = Encoder(in_channel_indi, in_features_indi, out_features_indi, map_input_shape_indi)
+
+        # --- Total Branch (Actor Head) 정의 ---
+        # 모든 잠재 벡터를 합친 크기를 입력으로 받음
+        total_latent_size = self.team_encoder.total_latent_size + self.indi_encoder.total_latent_size
+                            
+        self.actor_head = nn.Sequential(
+            nn.Linear(total_latent_size, embedding_dim),
+            nn.ReLU(),
+            nn.Linear(embedding_dim, action_dim),
+            nn.Tanh() 
+        )
+    
+
+    def forward(self, observation: dict[str, dict[str, torch.Tensor]]) -> torch.Tensor:
+        """
+        신경망의 순전파 로직
+        :param observation: 4개의 키를 가진 딕셔너리
+               - "team_map": (batch, C_team, H, W) 크기의 텐서
+               - "team_numerical": (batch, N_team_features) 크기의 텐서
+               - "indi_map": (batch, C_indi, H, W) 크기의 텐서
+               - "indi_numerical": (batch, N_indi_features) 크기의 텐서
+        :return: (batch, action_dim) 크기의 행동 텐서
+        """
+        # Team Branch 처리
+        z_team = self.team_encoder(observation["team"])
+        
+        # Individual Branch 처리
+        z_indi = self.indi_encoder(observation["individual"])
+        
+        # Total Branch 처리
+        z_total = torch.cat([z_team, z_indi], dim=1).squeeze(0)
+        action = self.actor_head(z_total)
         
         return action
+
 
 
 
@@ -341,3 +382,10 @@ class QNet(nn.Module):
         q_values = self.output_q(current_node_feature, enhanced_current_node_feature,
                                  enhanced_node_feature, current_edge, edge_padding_mask, headings_visited, neighbor_best_headings, current_index, all_agent_indices, all_agent_next_indices)
         return q_values
+
+
+def _get_conv_output_size(encoder, in_channel, map_shape):
+    """ CNN 인코더의 최종 출력 크기를 계산하기 위한 헬퍼 함수 """
+    dummy_input = torch.randn(1, in_channel, *map_shape)
+    output = encoder(dummy_input)
+    return output.shape[1]

@@ -47,7 +47,7 @@ class TestWorker:
             collisions = []
             for robot_id, robot in enumerate(self.robot_list):
                 # To Do : Observation Setting
-                observation = observations[robot_id][0]
+                observation = observations[robot_id]
                 velocity, yaw_rate = robot.get_action(observation)
                 actions.append((velocity, yaw_rate))
                 collisions.append(False)
@@ -120,10 +120,10 @@ class TestWorker:
 
             # Save experience in episode buffer of each agent
             for robot_id, robot in enumerate(self.robot_list):
-                obs = torch.as_tensor(observations[robot_id][0], dtype=torch.float32, device=self.device)
+                obs = observations[robot_id]
                 action = torch.as_tensor(actions[robot_id], dtype=torch.float32, device=self.device)
                 reward = torch.as_tensor(rewards[robot_id], dtype=torch.float32, device=self.device)
-                next_obs = torch.as_tensor(next_observations[robot_id][0], dtype=torch.float32, device=self.device)
+                next_obs = next_observations[robot_id]
                 done = torch.as_tensor(done, dtype=torch.bool, device=self.device)
                 robot.save_experience(obs, action, reward, next_obs, done)
 
@@ -284,11 +284,16 @@ class TestWorker:
 
 if __name__ == '__main__':
     import torch
-    map_size = 250
-    map_input_shape = (map_size, map_size)
+    global_map_size = GLOBAL_MAP_SIZE
+    local_map_size = LOCAL_MAP_SIZE
+    global_map_input_shape = (global_map_size, global_map_size)
+    local_map_input_shape = (local_map_size, local_map_size)
     action_dim = 2 # velocity and yaw_rate
 
-    policy_net = PolicyNet(map_input_shape, EMBEDDING_DIM, action_dim)
+    policy_net = PolicyNet(IN_CHANNEL_TEAM, NUM_TEAM_STATE, NUM_OUT_FEATURE,
+                           IN_CHANNEL_INDI, NUM_INDIVIDUAL_STATE, NUM_OUT_FEATURE,
+                           global_map_input_shape, local_map_input_shape,
+                           EMBEDDING_DIM, action_dim)
     if LOAD_MODEL:
         try:
             checkpoint = torch.load(load_path + '/checkpoint.pth', map_location='cpu')

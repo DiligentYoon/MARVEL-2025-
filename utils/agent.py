@@ -37,6 +37,7 @@ class Agent:
         self.fov = fov
         self.sensor_range = sensor_range
 
+
         # location and global map
         self.location = None
         self.map_info = None
@@ -92,6 +93,8 @@ class Agent:
         self.heading = heading
         
     def get_updating_map(self, location):
+        # Local Map은 location을 중심점으로 하여 updating_map_size의 사이즈로 생성됨.
+        # 좌표계는 global 좌표계를 사용. 별 다른 Local 좌표계를 따로 사용하지 않는다.
         updating_map_origin_x = (location[0] - self.updating_map_size / 2)
         updating_map_origin_y = (location[1] - self.updating_map_size / 2)
 
@@ -145,12 +148,31 @@ class Agent:
     def get_observation(self):
         # Return the agent's local occupancy grid map.
         # The map is centered around the agent's location.
+        obs = {
+            "team" : {
+                "map": torch.zeros((1, IN_CHANNEL_TEAM, GLOBAL_MAP_SIZE, GLOBAL_MAP_SIZE), dtype=torch.float32, device=self.device), 
+                "numerical": torch.zeros((NUM_TEAM_STATE, 1), dtype=torch.float32, device=self.device),
+            },
+            "individual": {
+                "map": torch.zeros((1, IN_CHANNEL_INDI, LOCAL_MAP_SIZE, LOCAL_MAP_SIZE), dtype=torch.float32, device=self.device), 
+                "numerical": torch.zeros((NUM_INDIVIDUAL_STATE, 1), dtype=torch.float32, device=self.device),
+            }
+        }
         shared_map = self.map_info.map
         local_map = self.updating_map_info.map
         # The input to the policy network should be a tensor.
-        shared_map_tensor = torch.FloatTensor(shared_map).unsqueeze(0).unsqueeze(0).to(self.device)
+        # To Do : 4채널 team map, 1채널 indi map 구현하기
+        # individual 쪽 크기 고정 로직 수정해야 함. 현재는 크기가 가변임.
+        shared_map_tensor = torch.FloatTensor(shared_map).unsqueeze(0).unsqueeze(0).to(self.device).expand(1, 4, -1, -1)
         local_map_tensor = torch.FloatTensor(local_map).unsqueeze(0).unsqueeze(0).to(self.device)
-        return shared_map_tensor, local_map_tensor
+
+        obs["team"]["map"] = shared_map_tensor
+        obs["team"]["numerical"] = torch.zeros((NUM_TEAM_STATE, 1), dtype=torch.float32, device=self.device)
+
+        # obs["individual"]["map"] = local_map_tensor
+        obs["individual"]["numerical"] = torch.zeros((NUM_INDIVIDUAL_STATE, 1), dtype=torch.float32, device=self.device)
+
+        return obs
 
 
     def get_action(self, observation):

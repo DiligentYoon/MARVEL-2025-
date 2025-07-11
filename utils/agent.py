@@ -183,66 +183,66 @@ class Agent:
         heading_rad = np.radians(heading)
         return np.cos(heading_rad) * length, np.sin(heading_rad) * length
     
-    def create_sensing_mask(self, location, heading, mask):
+    # def create_sensing_mask(self, location, heading, mask):
 
-        location_cell = get_cell_position_from_coords(location, self.map_info)
-        # Create a Point for the robot's location
-        robot_point = Point(location_cell)
+    #     location_cell = get_cell_position_from_coords(location, self.map_info)
+    #     # Create a Point for the robot's location
+    #     robot_point = Point(location_cell)
 
-        # Calculate the angles for the sector
-        start_angle = (heading - self.fov / 2 + 360) % 360
-        end_angle = (heading + self.fov / 2) % 360
+    #     # Calculate the angles for the sector
+    #     start_angle = (heading - self.fov / 2 + 360) % 360
+    #     end_angle = (heading + self.fov / 2) % 360
 
-        # Create points for the sector
-        sector_points = [robot_point]
-        if start_angle <= end_angle:
-            angle_range = np.linspace(start_angle, end_angle, 20)
-        else:
-            angle_range = np.concatenate([np.linspace(start_angle, 360, 10), np.linspace(0, end_angle, 10)])
-        for angle in angle_range:
-            x = location_cell[0] + self.sensor_range/CELL_SIZE * np.cos(np.radians(angle))
-            y = location_cell[1] + self.sensor_range/CELL_SIZE * np.sin(np.radians(angle))
-            sector_points.append(Point(x, y))
-        sector_points.append(robot_point) 
-        # Create the sector polygon
-        sector = Polygon(sector_points)
+    #     # Create points for the sector
+    #     sector_points = [robot_point]
+    #     if start_angle <= end_angle:
+    #         angle_range = np.linspace(start_angle, end_angle, 20)
+    #     else:
+    #         angle_range = np.concatenate([np.linspace(start_angle, 360, 10), np.linspace(0, end_angle, 10)])
+    #     for angle in angle_range:
+    #         x = location_cell[0] + self.sensor_range/CELL_SIZE * np.cos(np.radians(angle))
+    #         y = location_cell[1] + self.sensor_range/CELL_SIZE * np.sin(np.radians(angle))
+    #         sector_points.append(Point(x, y))
+    #     sector_points.append(robot_point) 
+    #     # Create the sector polygon
+    #     sector = Polygon(sector_points)
 
-        x_coords, y_coords = sector.exterior.xy
-        y_coords = np.rint(y_coords).astype(int)
-        x_coords = np.rint(x_coords).astype(int)
-        rr, cc = sk_polygon(
-                [int(round(y)) for y in y_coords],
-                [int(round(x)) for x in x_coords],
-                shape=mask.shape
-            )
+    #     x_coords, y_coords = sector.exterior.xy
+    #     y_coords = np.rint(y_coords).astype(int)
+    #     x_coords = np.rint(x_coords).astype(int)
+    #     rr, cc = sk_polygon(
+    #             [int(round(y)) for y in y_coords],
+    #             [int(round(x)) for x in x_coords],
+    #             shape=mask.shape
+    #         )
         
-        free_connected_map = get_free_and_connected_map(location, self.map_info)
+    #     free_connected_map = get_free_and_connected_map(location, self.map_info)
 
-        mask[rr, cc] = (free_connected_map[rr, cc] == free_connected_map[location_cell[1], location_cell[0]])
+    #     mask[rr, cc] = (free_connected_map[rr, cc] == free_connected_map[location_cell[1], location_cell[0]])
        
-        return mask
+    #     return mask
     
-    def calculate_overlap_reward(self, current_robot_location, all_robots_locations, robot_headings_list):
-        ## Robot heading list in degrees
-        current_sensing_mask = np.zeros_like(self.map_info.map)
-        other_robot_sensing_mask = np.zeros_like(self.map_info.map)
+    # def calculate_overlap_reward(self, current_robot_location, all_robots_locations, robot_headings_list):
+    #     ## Robot heading list in degrees
+    #     current_sensing_mask = np.zeros_like(self.map_info.map)
+    #     other_robot_sensing_mask = np.zeros_like(self.map_info.map)
         
-        for robot_location, robot_heading in zip(all_robots_locations, robot_headings_list):
-            if np.array_equal(current_robot_location, robot_location):       
-                current_sensing_mask = self.create_sensing_mask(robot_location, robot_heading, current_sensing_mask) 
-            else:
-                other_robot_sensing_mask = self.create_sensing_mask(robot_location, robot_heading, other_robot_sensing_mask)
+    #     for robot_location, robot_heading in zip(all_robots_locations, robot_headings_list):
+    #         if np.array_equal(current_robot_location, robot_location):       
+    #             current_sensing_mask = self.create_sensing_mask(robot_location, robot_heading, current_sensing_mask) 
+    #         else:
+    #             other_robot_sensing_mask = self.create_sensing_mask(robot_location, robot_heading, other_robot_sensing_mask)
 
-        # Keep cell value of 1 only for cells that hold a value of 255 in self.global_map_info.map
-        current_free_area_size = np.sum(current_sensing_mask)
-        unique_sensing_mask = np.logical_and(current_sensing_mask == 1, other_robot_sensing_mask == 0).astype(int)
-        # Compute the number of cells that have a value of 1 in current_sensing_mask and 0 in other_robot_sensing_mask
-        current_free_area_not_scanned_size = np.sum(unique_sensing_mask)
+    #     # Keep cell value of 1 only for cells that hold a value of 255 in self.global_map_info.map
+    #     current_free_area_size = np.sum(current_sensing_mask)
+    #     unique_sensing_mask = np.logical_and(current_sensing_mask == 1, other_robot_sensing_mask == 0).astype(int)
+    #     # Compute the number of cells that have a value of 1 in current_sensing_mask and 0 in other_robot_sensing_mask
+    #     current_free_area_not_scanned_size = np.sum(unique_sensing_mask)
 
-        overlap_reward = np.square(current_free_area_not_scanned_size / current_free_area_size)     
+    #     overlap_reward = np.square(current_free_area_not_scanned_size / current_free_area_size)     
 
         
-        return overlap_reward
+    #     return overlap_reward
         
     def save_experience(self, obs, action, reward, next_obs, done):
         self.episode_buffer.append((obs, action, reward, next_obs, done))

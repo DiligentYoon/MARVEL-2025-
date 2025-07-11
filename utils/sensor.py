@@ -18,7 +18,7 @@ def collision_check(x0, y0, x1, y1, ground_truth, robot_belief):
     max_collision = 2
 
     while 0 <= x < ground_truth.shape[1] and 0 <= y < ground_truth.shape[0]:
-        k = ground_truth.item(y, x)
+        k = ground_truth.item(np.int64(y), np.int64(x))
         if k == 1 and collision_flag < max_collision:
             collision_flag += 1
             if collision_flag >= max_collision:
@@ -30,7 +30,7 @@ def collision_check(x0, y0, x1, y1, ground_truth, robot_belief):
         if x == x1 and y == y1:
             break
 
-        robot_belief.itemset((y, x), k)
+        robot_belief[np.int64(y), np.int64(x)] = k
 
         if error > 0:
             x += x_inc
@@ -104,7 +104,7 @@ def fov_sweep(start_angle, end_angle, increment):
 
 def sensor_work_heading(robot_position, sensor_range, robot_belief, ground_truth, heading, fov):
 
-    sensor_angle_inc = 0.5
+    sensor_angle_inc = 2.0
     x0 = robot_position[0]
     y0 = robot_position[1]
     start_angle, end_angle = calculate_fov_boundaries(heading, fov)

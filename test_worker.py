@@ -22,11 +22,15 @@ class TestWorker:
         self.dt = DT
         self.sim_steps = NUM_SIM_STEPS
 
+        print(f"[INFO] Instantiating Environment...")
         self.env = Env(global_step, self.fov, self.sensor_range, plot=self.save_image)
+        print(f"[INFO] Environment is instantiated successfully !")
         self.n_agents = N_AGENTS
 
+        print(f"[INFO] Instantiating Agents... # of Agents : {self.n_agents}")
         self.robot_list = [Agent(i, policy_net, self.fov, self.env.angles[i], self.sensor_range, self.device, self.save_image) for i in
                            range(self.n_agents)]
+        print(f"[INFO] Agents are instantiated successfully !")
 
         self.perf_metrics = dict()
 
@@ -42,7 +46,8 @@ class TestWorker:
             actions = []
             collisions = []
             for robot_id, robot in enumerate(self.robot_list):
-                observation = observations[robot_id]
+                # To Do : Observation Setting
+                observation = observations[robot_id][0]
                 velocity, yaw_rate = robot.get_action(observation)
                 actions.append((velocity, yaw_rate))
                 collisions.append(False)
@@ -84,13 +89,16 @@ class TestWorker:
                     robot_locations_sim_step.append(robot.location)
                     robot_headings_sim_step.append(robot.heading)
 
-                # 한 스텝 진행 이후에 Collision Check -> 다음 decimation step에서 state update x
-                collisions = self.collision_check(prev_collisions)
-                prev_collisions = collisions
+                    # 한 스텝 진행 이후에 Collision Check -> Collision 탐지된 객체는 다음 decimation step에서 state update x
+                    collisions = self.collision_check(prev_collisions)
+                    prev_collisions = collisions
 
                 if self.save_image:
                     num_frame = i * self.sim_steps + _
-                    self.plot_local_env_sim(num_frame, robot_locations_sim_step, robot_headings_sim_step)
+                    robot_cells_sim_step = get_cell_position_from_coords(
+                        np.array(robot_locations_sim_step), self.env.belief_info
+                    )
+                    self.plot_local_env_sim(num_frame, robot_cells_sim_step, robot_headings_sim_step)
 
 
             # ============= Reward Calculation ===============
@@ -112,10 +120,10 @@ class TestWorker:
 
             # Save experience in episode buffer of each agent
             for robot_id, robot in enumerate(self.robot_list):
-                obs = torch.as_tensor(observations[robot_id], dtype=torch.float32, device=self.device)
-                action = torch.as_tensor(actions[robot_id], dtype=torch.long, device=self.device) # 행동은 보통 정수형
+                obs = torch.as_tensor(observations[robot_id][0], dtype=torch.float32, device=self.device)
+                action = torch.as_tensor(actions[robot_id], dtype=torch.float32, device=self.device)
                 reward = torch.as_tensor(rewards[robot_id], dtype=torch.float32, device=self.device)
-                next_obs = torch.as_tensor(next_observations[robot_id], dtype=torch.float32, device=self.device)
+                next_obs = torch.as_tensor(next_observations[robot_id][0], dtype=torch.float32, device=self.device)
                 done = torch.as_tensor(done, dtype=torch.bool, device=self.device)
                 robot.save_experience(obs, action, reward, next_obs, done)
 
@@ -170,24 +178,23 @@ class TestWorker:
 
     def collision_check(self, prev_collision):
         collision = prev_collision
-        for robot_id, robot in self.robot_list:
+        for robot_id, robot in enumerate(self.robot_list):
             # 이전 step에 collision이 발생하지 않은 로봇에 대해서만 수행
             if not collision[robot_id]:
-                other_locations = [r.location for i, r in enumerate(self.robot_list) if i != robot_id]
+                other_locations = np.stack([r.location for i, r in enumerate(self.robot_list) if i != robot_id])
                 other_cell = get_cell_position_from_coords(other_locations, robot.map_info)
                 current_cell = get_cell_position_from_coords(robot.location, robot.map_info)
 
-                wall_collision = (0 <= current_cell[0] < self.env.belief_info.map.shape[1] and
-                                0 <= current_cell[1] < self.env.belief_info.map.shape[0] and
-                                self.env.belief_info.map[current_cell[1], current_cell[0]] == FREE)
+                wall_collision = (0 <= current_cell[0] < self.env.ground_truth_info.map.shape[1] and
+                                0 <= current_cell[1] < self.env.ground_truth_info.map.shape[0] and
+                                self.env.ground_truth_info.map[current_cell[1], current_cell[0]] == FREE)
             
                 drone_collision = np.any(np.all(other_cell == current_cell, axis=1))
 
                 # Collision이 일어났는지만 check
-                collision[robot_id] = wall_collision and drone_collision
+                collision[robot_id] = wall_collision or drone_collision
 
         return collision
-
 
     def plot_local_env_sim(self, step, robot_locations, robot_headings):
         plt.switch_backend('agg')
@@ -196,31 +203,27 @@ class TestWorker:
         color_name = ['Red', 'Blue', 'Green', 'Yellow']
         sensing_range = self.sensor_range / CELL_SIZE
 
+        # =================== subplot(1, 3, 1) : 왼쪽 그림 (Belief Map) ===================
         plt.subplot(1, 3, 1)
         plt.imshow(self.env.robot_belief, cmap='gray')
         plt.axis('off')
+        # xlim, ylim을 나중에 사용하기 위해 저장
         xlim = plt.gca().get_xlim()
         ylim = plt.gca().get_ylim()
         plt.xlim(xlim[0], xlim[1])
         plt.ylim(ylim[0], ylim[1])
-          
-        for robot in self.robot_list:
-            c = color_list[robot.id]
             
-            if robot.id == 0:
-                nodes = get_cell_position_from_coords(robot.node_coords, robot.map_info)
-                plt.scatter(nodes[:, 0], nodes[:, 1], c=robot.utility, s=8, zorder=2)
-                for i, (x, y) in enumerate(nodes):
-                    plt.text(x-3, y-3, f'{robot.utility[i]:.0f}', ha='center', va='bottom', fontsize=3, color='blue', zorder=3)
-                   
-        # Plot frontiers
-        global_frontiers = get_frontier_in_map(self.env.belief_info)
-        if len(global_frontiers) != 0:
-            frontiers_cell = get_cell_position_from_coords(np.array(list(global_frontiers)), self.env.belief_info) #shape is (2,)
-            if len(global_frontiers) == 1:
-                frontiers_cell = frontiers_cell.reshape(1,2)
-            plt.scatter(frontiers_cell[:, 0], frontiers_cell[:, 1], s=1, c='r')       
+        # --- 삭제된 부분 시작 ---
+        # 원본 코드에서 robot.id == 0 일때 노드와 유틸리티를 그리던 부분
+        # for robot in self.robot_list:
+        #     if robot.id == 0:
+        #         nodes = get_cell_position_from_coords(robot.node_coords, robot.map_info)
+        #         plt.scatter(nodes[:, 0], nodes[:, 1], c=robot.utility, s=8, zorder=2)
+        #         for i, (x, y) in enumerate(nodes):
+        #             plt.text(x-3, y-3, f'{robot.utility[i]:.0f}', ha='center', va='bottom', fontsize=3, color='blue', zorder=3)
+        # --- 삭제된 부분 끝 ---
 
+        # =================== subplot(1, 3, 2) : 중간 그림 (Belief Map + Trajectory) ===================
         plt.subplot(1, 3, 2)
         plt.imshow(self.env.robot_belief, cmap='gray')
         plt.axis('off')
@@ -231,6 +234,7 @@ class TestWorker:
         for i, (robot, location, heading) in enumerate(zip(self.robot_list, robot_locations, robot_headings)):
             c = color_list[robot.id]
             dx, dy = self.heading_to_vector(heading, length=sensing_range)
+            # 화살표 스타일은 그대로 유지
             arrow = FancyArrowPatch((location[0], location[1]), (location[0] + dx/1.25, location[1] + dy/1.25),
                                     mutation_scale=10,
                                     color=c,
@@ -238,22 +242,20 @@ class TestWorker:
             plt.gca().add_artist(arrow)
             plt.text(location[0] + 5, location[1] + 5, f'{heading:.0f}°', color=c, fontsize=6, ha='left', va='center', zorder=16)
 
+            # 이동 경로 그리는 로직은 그대로 유지
             robot_location = get_coords_from_cell_position(location, self.env.belief_info)
             trajectory_x = robot.trajectory_x.copy()
             trajectory_y = robot.trajectory_y.copy()
             trajectory_x.append(robot_location[0])
             trajectory_y.append(robot_location[1])
             plt.plot((np.array(trajectory_x) - robot.map_info.map_origin_x) / robot.cell_size,
-                     (np.array(trajectory_y) - robot.map_info.map_origin_y) / robot.cell_size, c,
-                     linewidth=1.2, zorder=1)
-            
-        # Plot frontiers
-        if len(global_frontiers) != 0:
-            plt.scatter(frontiers_cell[:, 0], frontiers_cell[:, 1], s=1, c='r')
+                        (np.array(trajectory_y) - robot.map_info.map_origin_y) / robot.cell_size, c,
+                        linewidth=1.2, zorder=1)
 
-        # Ground truth data
+        # =================== subplot(1, 3, 3) : 오른쪽 그림 (Ground Truth) ===================
         plt.subplot(1, 3, 3)
-        plt.imshow(self.ground_truth_node_manager.ground_truth_map_info.map, cmap='gray')
+        # ground_truth_node_manager 대신 env에 있는 ground_truth_info를 사용하도록 수정 (또는 self.env.ground_truth)
+        plt.imshow(self.env.ground_truth_info.map, cmap='gray')
         plt.xlim(xlim[0], xlim[1])
         plt.ylim(ylim[0], ylim[1])
         for i, (location, heading) in enumerate(zip(robot_locations, robot_headings)):
@@ -264,17 +266,15 @@ class TestWorker:
 
             # Draw cone representing field of vision
             cone = Wedge(center=(location[0], location[1]), r=self.sensor_range / CELL_SIZE, theta1=(heading-self.fov/2), 
-                         theta2=(heading+self.fov/2), color=c, alpha=0.5, zorder=10)
+                            theta2=(heading+self.fov/2), color=c, alpha=0.5, zorder=10)
             plt.gca().add_artist(cone)
-            nodes = get_cell_position_from_coords(self.ground_truth_node_manager.ground_truth_node_coords, self.ground_truth_node_manager.ground_truth_map_info)
-            plt.scatter(nodes[:, 0], nodes[:, 1], c=self.ground_truth_node_manager.explored_sign, s=8, zorder=2)
 
         plt.axis('off')
-        robot_headings = [f"{color_name[robot.id]}- {robot.heading:.0f}°" for robot in self.robot_list]
+        robot_headings_str = [f"{color_name[robot.id]}-{robot.heading:.0f}°" for robot in self.robot_list]
         plt.suptitle('Explored ratio: {:.4g}  Travel distance: {:.4g}\nRobot Headings: {}'.format(
             self.env.explored_rate,
             max([robot.travel_dist for robot in self.robot_list]),
-            ', '.join(robot_headings)
+            ', '.join(robot_headings_str)
         ), fontweight='bold', fontsize=10)
         plt.tight_layout()
         plt.savefig('{}/{}_{}_samples.png'.format(gifs_path, self.global_step, step), dpi=150)
@@ -284,7 +284,7 @@ class TestWorker:
 
 if __name__ == '__main__':
     import torch
-    map_size = int(UPDATING_MAP_SIZE / CELL_SIZE)
+    map_size = 250
     map_input_shape = (map_size, map_size)
     action_dim = 2 # velocity and yaw_rate
 

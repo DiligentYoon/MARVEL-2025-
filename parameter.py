@@ -38,9 +38,10 @@ USE_CONTINUOUS_SIM = True
 NUM_SIM_STEPS = 6
 VELOCITY = 0.5
 YAW_RATE = 15 # in degrees
+NODE_RESOLUTION = 4
 
 # Heading parameters
-FOV = 120   # in degrees
+FOV = 80   # in degrees
 V_FOV = 60
 MOUNTING_ANGLE = 15 # downwards
 NUM_ANGLES_BIN = 36

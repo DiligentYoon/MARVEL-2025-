@@ -24,6 +24,38 @@ def get_cell_position_from_coords(coords, map_info, check_negative=True):
         return cell_position[0]
     else:
         return cell_position
+    
+def get_updating_node_coords(location, updating_map_info):
+    x_min = updating_map_info.map_origin_x
+    y_min = updating_map_info.map_origin_y
+    x_max = updating_map_info.map_origin_x + (updating_map_info.map.shape[1] - 1) * CELL_SIZE
+    y_max = updating_map_info.map_origin_y + (updating_map_info.map.shape[0] - 1) * CELL_SIZE
+
+    if x_min % NODE_RESOLUTION != 0:
+        x_min = (x_min // NODE_RESOLUTION + 1) * NODE_RESOLUTION
+    if x_max % NODE_RESOLUTION != 0:
+        x_max = x_max // NODE_RESOLUTION * NODE_RESOLUTION
+    if y_min % NODE_RESOLUTION != 0:
+        y_min = (y_min // NODE_RESOLUTION + 1) * NODE_RESOLUTION
+    if y_max % NODE_RESOLUTION != 0:
+        y_max = y_max // NODE_RESOLUTION * NODE_RESOLUTION
+
+    x_coords = np.arange(x_min, x_max + 0.1, NODE_RESOLUTION)
+    y_coords = np.arange(y_min, y_max + 0.1, NODE_RESOLUTION)
+    t1, t2 = np.meshgrid(x_coords, y_coords)
+    nodes = np.vstack([t1.T.ravel(), t2.T.ravel()]).T
+    nodes = np.around(nodes, 1)
+
+    indices = []
+    nodes_cells = get_cell_position_from_coords(nodes, updating_map_info).reshape(-1, 2)
+    for i, cell in enumerate(nodes_cells):
+        assert 0 <= cell[1] < updating_map_info.map.shape[0] and 0 <= cell[0] < updating_map_info.map.shape[1]
+        if updating_map_info.map[cell[1], cell[0]] == FREE:
+            indices.append(i)
+    indices = np.array(indices)
+    nodes = nodes[indices].reshape(-1, 2)
+
+    return nodes
 
 def get_coords_from_cell_position(cell_position, map_info):
     cell_position = cell_position.reshape(-1, 2)

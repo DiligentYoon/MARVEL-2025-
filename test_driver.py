@@ -25,7 +25,7 @@ import os
 import time
 
 from utils.model import PolicyNet
-from utils.test_worker import TestWorker
+from test_worker import TestWorker
 from test_parameter import *
 import csv
 

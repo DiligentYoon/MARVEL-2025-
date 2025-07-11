@@ -1,42 +1,17 @@
-"""
-A multi-agent worker class for coordinating multi-robots exploration in an indoor environment.
-
-This class manages a group of agents performing collaborative exploration, handling 
-their movement, observation, reward calculation, and simulation steps. It supports 
-features like collision avoidance, trajectory planning, and performance tracking.
-
-Key functionalities:
-- Initializes multiple agents with a shared policy network
-- Runs exploration episodes with collision resolution
-- Tracks agent locations, headings, and exploration progress
-- Generates visualizations of the exploration process
-- Calculates rewards and saves episode data
-
-Attributes:
-    meta_agent_id (int): Identifier for the meta-agent group
-    global_step (int): Current global simulation step
-    env (Env): Environment simulation instance
-    robot_list (List[Agent]): List of agents in the exploration team
-    episode_buffer (List): Buffer for storing episode data
-    perf_metrics (dict): Performance metrics for the episode
-"""
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from matplotlib.patches import Wedge, FancyArrowPatch
-import os
-import sys
-
-sys.path.append(os.getcwd())
 
 from utils.env import Env
 from utils.agent import Agent
 from utils.utils import *
 from utils.model import PolicyNet
+from test_parameter import *
 
 if not os.path.exists(gifs_path):
     os.makedirs(gifs_path)
 
-class MultiAgentWorker:
+class TestWorker:
     def __init__(self, meta_agent_id, policy_net, global_step, device='cpu', save_image=False):
         self.meta_agent_id = meta_agent_id
         self.global_step = global_step
@@ -307,13 +282,8 @@ class MultiAgentWorker:
         frame = '{}/{}_{}_samples.png'.format(gifs_path, self.global_step, step)
         self.env.frame_files.append(frame)
 
-
-
 if __name__ == '__main__':
-    from parameter import *
     import torch
-    # The input shape for the CNN is (height, width)
-    # The map size needs to be an integer for the model input shape.
     map_size = int(UPDATING_MAP_SIZE / CELL_SIZE)
     map_input_shape = (map_size, map_size)
     action_dim = 2 # velocity and yaw_rate
@@ -327,5 +297,5 @@ if __name__ == '__main__':
         except FileNotFoundError:
             print("Checkpoint not found, using randomly initialized policy.")
 
-    worker = MultiAgentWorker(0, policy_net, 888, 'cpu', True)
+    worker = TestWorker(0, policy_net, 888, 'cpu', True)
     worker.run_episode()

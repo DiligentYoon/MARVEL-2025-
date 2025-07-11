@@ -2,7 +2,6 @@ import numpy as np
 import imageio
 import os
 from skimage.morphology import label
-
 from parameter import *
 
 
@@ -53,55 +52,6 @@ def get_free_and_connected_map(location, map_info):
     label_number = labeled_free[cell[1], cell[0]]
     connected_free_map = (labeled_free == label_number)
     return connected_free_map
-
-def get_updating_node_coords(location, updating_map_info, check_connectivity=True):
-    x_min = updating_map_info.map_origin_x
-    y_min = updating_map_info.map_origin_y
-    x_max = updating_map_info.map_origin_x + (updating_map_info.map.shape[1] - 1) * CELL_SIZE
-    y_max = updating_map_info.map_origin_y + (updating_map_info.map.shape[0] - 1) * CELL_SIZE
-
-    if x_min % NODE_RESOLUTION != 0:
-        x_min = (x_min // NODE_RESOLUTION + 1) * NODE_RESOLUTION
-    if x_max % NODE_RESOLUTION != 0:
-        x_max = x_max // NODE_RESOLUTION * NODE_RESOLUTION
-    if y_min % NODE_RESOLUTION != 0:
-        y_min = (y_min // NODE_RESOLUTION + 1) * NODE_RESOLUTION
-    if y_max % NODE_RESOLUTION != 0:
-        y_max = y_max // NODE_RESOLUTION * NODE_RESOLUTION
-
-    x_coords = np.arange(x_min, x_max + 0.1, NODE_RESOLUTION)
-    y_coords = np.arange(y_min, y_max + 0.1, NODE_RESOLUTION)
-    t1, t2 = np.meshgrid(x_coords, y_coords)
-    nodes = np.vstack([t1.T.ravel(), t2.T.ravel()]).T
-    nodes = np.around(nodes, 1)
-
-    free_connected_map = None
-
-    if not check_connectivity:
-
-        indices = []
-        nodes_cells = get_cell_position_from_coords(nodes, updating_map_info).reshape(-1, 2)
-        for i, cell in enumerate(nodes_cells):
-            assert 0 <= cell[1] < updating_map_info.map.shape[0] and 0 <= cell[0] < updating_map_info.map.shape[1]
-            if updating_map_info.map[cell[1], cell[0]] == FREE:
-                indices.append(i)
-        indices = np.array(indices)
-        nodes = nodes[indices].reshape(-1, 2)
-
-    else:
-        free_connected_map = get_free_and_connected_map(location, updating_map_info)
-        free_connected_map = np.array(free_connected_map)
-
-        indices = []
-        nodes_cells = get_cell_position_from_coords(nodes, updating_map_info).reshape(-1, 2)
-        for i, cell in enumerate(nodes_cells):
-            assert 0 <= cell[1] < free_connected_map.shape[0] and 0 <= cell[0] < free_connected_map.shape[1]
-            if free_connected_map[cell[1], cell[0]] == 1:
-                indices.append(i)
-        indices = np.array(indices)
-        nodes = nodes[indices].reshape(-1, 2)
-
-    return nodes, free_connected_map
 
 def get_frontier_in_map(map_info):
     x_len = map_info.map.shape[1]
@@ -220,6 +170,7 @@ def make_gif_test(path, n, frame_files, rate, n_agents, fov, sensor_range):
     for filename in frame_files[:-1]:
         os.remove(filename)
 
+os.getcwd()
 
 class MapInfo:
     def __init__(self, map, map_origin_x, map_origin_y, cell_size):
